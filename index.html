@@ -618,7 +618,7 @@
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-label">Balance</div>
-                <div class="stat-value green" id="balance">$10,000</div>
+                <div class="stat-value green" id="balance">₹10,000</div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">Total P&L</div>
@@ -631,6 +631,13 @@
             <div class="stat-card">
                 <div class="stat-label">Trades</div>
                 <div class="stat-value" id="totalTrades">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">AI Confidence</div>
+                <div class="stat-value" id="aiConf" style="color:#ffd700">60%</div>
+            </div>
+            <div class="stat-card">
+                <button id="autoToggle" class="hbtn" style="background:#00ff88;color:#000;padding:6px 12px;border-radius:8px;font-weight:700;cursor:pointer">🤖 AUTO ON</button>
             </div>
         </div>
 
@@ -703,10 +710,15 @@
         let currentSymbol = 'BTCUSDT';
         let currentPrice = 0;
         let priceData = [];
-        let balance = 10000;
+        let balance = 10000; // INR
         let trades = [];
         let aiLearning = { correct: 0, total: 0 };
         let lastSignalPrev = 0;
+        let autoTrade = true;
+        let lastAutoTrade = 0;
+        let aiConfidence = 60;
+        let consecutiveLoss = 0;
+        const INR_RATE = 83; // 1 USD = 83 INR
 
         // Toast
         function showToast(msg) {
@@ -719,10 +731,13 @@
             setTimeout(() => toast.remove(), 3000);
         }
 
-        // Format
+        // Format INR
         function fmt(num, d = 2) {
-            if (num >= 1000) return num.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
-            return num.toFixed(d);
+            if (num >= 1000) return '₹' + num.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+            return '₹' + num.toFixed(d);
+        }
+        function fmtUSD(num, d = 2) {
+            return '$' + num.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
         }
 
         // Fetch Kline
@@ -772,41 +787,59 @@
 
         // AI Analysis
         function analyzeSignal(data) {
-            if (data.length < 50) return { signal: 'HOLD', reason: 'Analyzing...' };
+            if (data.length < 50) return { signal: 'HOLD', reason: 'Analyzing...', confidence: 0 };
 
             const ema9 = calcEMA(data, 9);
             const ema21 = calcEMA(data, 21);
-            const rsi = calcRSI(data);
+            const ema55 = calcEMA(data, 55);
+            const rsi = calcRSI(data, 14);
+            const macdLine = calcEMA(data, 12);
+            const signalLine = calcEMA(data, 26);
             const last = data.length - 1;
 
             const price = data[last].close;
             const rsiVal = rsi[rsi.length - 1] || 50;
             const rsiPrev = rsi[rsi.length - 2] || 50;
+            const rsiPrev2 = rsi[rsi.length - 3] || 50;
+            const macd = macdLine[last] - signalLine[last];
+            const macdPrev = macdLine[last-1] - signalLine[last-1];
+            const volume = data[last].volume;
 
             let score = 0, reasons = [];
 
-            if (rsiVal < 35 && rsiVal > rsiPrev) { score += 3; reasons.push('RSI Oversold'); }
-            else if (rsiVal > 65 && rsiVal < rsiPrev) { score -= 3; reasons.push('RSI Overbought'); }
+            // RSI analysis
+            if (rsiVal < 30 && rsiVal > rsiPrev) { score += 4; reasons.push('RSI Oversold'); }
+            else if (rsiVal < 40 && rsiVal > rsiPrev && rsiVal > rsiPrev2) { score += 2; reasons.push('RSI Recovering'); }
+            else if (rsiVal > 70 && rsiVal < rsiPrev) { score -= 4; reasons.push('RSI Overbought'); }
+            else if (rsiVal > 60 && rsiVal < rsiPrev && rsiVal < rsiPrev2) { score -= 2; reasons.push('RSI Weakening'); }
 
-            if (price > ema21[last] && ema9[last] > ema21[last]) { score += 2; reasons.push('Bullish'); }
-            else if (price < ema21[last] && ema9[last] < ema21[last]) { score -= 2; reasons.push('Bearish'); }
+            // EMA crossover
+            if (ema9[last] > ema21[last] && ema9[last-1] <= ema21[last-1]) { score += 3; reasons.push('Golden Cross'); }
+            else if (ema9[last] < ema21[last] && ema9[last-1] >= ema21[last-1]) { score -= 3; reasons.push('Death Cross'); }
+            else if (price > ema55[last] && ema9[last] > ema21[last]) { score += 2; reasons.push('Uptrend'); }
+            else if (price < ema55[last] && ema9[last] < ema21[last]) { score -= 2; reasons.push('Downtrend'); }
+
+            // MACD
+            if (macd > 0 && macdPrev <= 0) { score += 2; reasons.push('MACD Bullish'); }
+            else if (macd < 0 && macdPrev >= 0) { score -= 2; reasons.push('MACD Bearish'); }
 
             if (reasons.length === 0) reasons.push('No clear signal');
 
             let signal = 'HOLD';
             let entry = price, sl, target;
 
-            if (score >= 3) {
+            if (score >= 4) {
                 signal = 'BUY';
                 sl = price * 0.995;
-                target = price * 1.02;
-            } else if (score <= -3) {
+                target = price * 1.025;
+            } else if (score <= -4) {
                 signal = 'SELL';
                 sl = price * 1.005;
-                target = price * 0.98;
+                target = price * 0.975;
             }
 
-            return { signal, reason: reasons.join(' | '), entry, sl, target };
+            const confidence = Math.min(95, Math.max(30, 50 + Math.abs(score) * 8 + Math.abs(rsiVal - 50) * 0.5));
+            return { signal, reason: reasons.join(' | '), entry, sl, target, confidence: Math.round(confidence) };
         }
 
         // Draw Chart
@@ -853,13 +886,13 @@
             currentPrice = +ticker.lastPrice;
             const changePct = +ticker.priceChangePercent;
 
-            document.getElementById('currentPrice').textContent = '$' + fmt(currentPrice);
+            document.getElementById('currentPrice').textContent = fmtUSD(currentPrice) + ' | ₹' + fmt(currentPrice * INR_RATE);
             document.getElementById('symbolName').textContent = currentSymbol.replace('USDT', '/USDT');
             const changeEl = document.getElementById('priceChange');
             changeEl.textContent = (changePct >= 0 ? '+' : '') + changePct.toFixed(2) + '%';
             changeEl.className = 'price-change ' + (changePct >= 0 ? 'up' : 'down');
-            document.getElementById('high24').textContent = '$' + fmt(+ticker.highPrice);
-            document.getElementById('low24').textContent = '$' + fmt(+ticker.lowPrice);
+            document.getElementById('high24').textContent = fmtUSD(+ticker.highPrice);
+            document.getElementById('low24').textContent = fmtUSD(+ticker.lowPrice);
             document.getElementById('volume').textContent = (+ticker.volume / 1000).toFixed(1) + 'K';
 
             drawChart(klines);
@@ -871,9 +904,9 @@
             document.getElementById('signalReason').textContent = analysis.reason;
 
             if (analysis.signal !== 'HOLD') {
-                document.getElementById('entryPrice').textContent = '$' + fmt(analysis.entry);
-                document.getElementById('stopLoss').textContent = '$' + fmt(analysis.sl);
-                document.getElementById('targetPrice').textContent = '$' + fmt(analysis.target);
+                document.getElementById('entryPrice').textContent = fmtUSD(analysis.entry);
+                document.getElementById('stopLoss').textContent = fmtUSD(analysis.sl);
+                document.getElementById('targetPrice').textContent = fmtUSD(analysis.target);
             } else {
                 document.getElementById('entryPrice').textContent = '-';
                 document.getElementById('stopLoss').textContent = '-';
@@ -890,11 +923,13 @@
             const wins = closed.filter(t => t.pnl > 0);
             const totalPnl = closed.reduce((s, t) => s + t.pnl, 0);
 
-            document.getElementById('balance').textContent = '$' + fmt(balance);
+            document.getElementById('balance').textContent = fmt(balance);
             const pnlEl = document.getElementById('totalPnl');
-            pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + fmt(totalPnl);
+            pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + fmt(totalPnl);
             pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'green' : 'red');
             document.getElementById('winRate').textContent = closed.length > 0 ? Math.round((wins.length / closed.length) * 100) + '%' : '0%';
+            document.getElementById('aiAccuracy').textContent = aiLearning.total > 0 ? Math.round((aiLearning.correct / aiLearning.total) * 100) + '%' : '0%';
+            document.getElementById('aiConf').textContent = aiConfidence + '%';
             document.getElementById('totalTrades').textContent = closed.length;
 
             const acc = aiLearning.total > 0 ? Math.round((aiLearning.correct / aiLearning.total) * 100) : 0;
@@ -949,18 +984,89 @@
             showToast(type.toUpperCase() + ' opened!');
         }
 
+        // Auto Trade Logic
+        function autoTrade() {
+            if (!autoTrade) return;
+            if (balance < 100) { showToast('Balance low!'); return; }
+            if (trades.filter(t => t.status === 'open').length >= 2) return;
+
+            const analysis = analyzeSignal(priceData);
+            if (analysis.signal === 'HOLD') return;
+            if (analysis.confidence < aiConfidence) return;
+
+            const openTrades = trades.filter(t => t.status === 'open');
+            if (openTrades.length > 0) return;
+
+            const type = analysis.signal === 'BUY' ? 'long' : 'short';
+            const slDist = type === 'long' ? currentPrice - analysis.sl : analysis.sl - currentPrice;
+            if (slDist <= 0) return;
+
+            const riskAmount = balance * 0.02;
+            const size = riskAmount / slDist;
+            const cost = size * currentPrice;
+            if (cost > balance) return;
+
+            trades.push({
+                type, symbol: currentSymbol, entry: currentPrice,
+                sl: analysis.sl, target: analysis.target, size, status: 'open', pnl: 0,
+                confidence: analysis.confidence, reason: analysis.reason, time: Date.now()
+            });
+            saveData();
+            updateStats();
+            showToast('🤖 AI ' + type.toUpperCase() + ' @ ₹' + fmt(currentPrice));
+        }
+
         // Check Trades
         function checkTrades() {
             let updated = false;
             for (const t of trades) {
                 if (t.status !== 'open') continue;
                 if (t.type === 'long') {
-                    if (currentPrice <= t.sl) { t.status = 'closed'; t.exit = t.sl; t.pnl = (t.exit - t.entry) * t.size; balance += t.pnl; aiLearning.total++; updated = true; }
-                    else if (currentPrice >= t.target) { t.status = 'closed'; t.exit = t.target; t.pnl = (t.exit - t.entry) * t.size; balance += t.pnl; aiLearning.total++; aiLearning.correct++; updated = true; }
+                    if (currentPrice <= t.sl) {
+                        t.status = 'closed'; t.exit = t.sl;
+                        t.pnl = (t.exit - t.entry) * t.size;
+                        balance += t.pnl;
+                        aiLearning.total++;
+                        if (t.pnl > 0) { aiLearning.correct++; consecutiveLoss = 0; }
+                        else { consecutiveLoss++; aiConfidence = Math.max(40, aiConfidence - 5); }
+                        updated = true;
+                    }
+                    else if (currentPrice >= t.target) {
+                        t.status = 'closed'; t.exit = t.target;
+                        t.pnl = (t.exit - t.entry) * t.size;
+                        balance += t.pnl;
+                        aiLearning.total++;
+                        aiLearning.correct++;
+                        consecutiveLoss = 0;
+                        aiConfidence = Math.min(85, aiConfidence + 2);
+                        updated = true;
+                    }
                 } else {
-                    if (currentPrice >= t.sl) { t.status = 'closed'; t.exit = t.sl; t.pnl = (t.entry - t.exit) * t.size; balance += t.pnl; aiLearning.total++; updated = true; }
-                    else if (currentPrice <= t.target) { t.status = 'closed'; t.exit = t.target; t.pnl = (t.entry - t.exit) * t.size; balance += t.pnl; aiLearning.total++; aiLearning.correct++; updated = true; }
+                    if (currentPrice >= t.sl) {
+                        t.status = 'closed'; t.exit = t.sl;
+                        t.pnl = (t.entry - t.exit) * t.size;
+                        balance += t.pnl;
+                        aiLearning.total++;
+                        if (t.pnl > 0) { aiLearning.correct++; consecutiveLoss = 0; }
+                        else { consecutiveLoss++; aiConfidence = Math.max(40, aiConfidence - 5); }
+                        updated = true;
+                    }
+                    else if (currentPrice <= t.target) {
+                        t.status = 'closed'; t.exit = t.target;
+                        t.pnl = (t.entry - t.exit) * t.size;
+                        balance += t.pnl;
+                        aiLearning.total++;
+                        aiLearning.correct++;
+                        consecutiveLoss = 0;
+                        aiConfidence = Math.min(85, aiConfidence + 2);
+                        updated = true;
+                    }
                 }
+            }
+            // Stop auto-trade if 3 consecutive losses
+            if (consecutiveLoss >= 3) {
+                autoTrade = false;
+                showToast('⚠️ Auto-trade paused due to 3 losses');
             }
             if (updated) { saveData(); updateStats(); }
         }
@@ -1008,9 +1114,22 @@
         async function init() {
             await loadData();
             await updateUI();
-            setInterval(updateUI, 30000);
+            setInterval(async () => {
+                await updateUI();
+                autoTrade();
+            }, 60000);
+            // Manual trigger after 10s
+            setTimeout(autoTrade, 10000);
         }
         init();
+
+        // Auto trade toggle
+        document.getElementById('autoToggle')?.addEventListener('click', () => {
+            autoTrade = !autoTrade;
+            consecutiveLoss = 0;
+            aiConfidence = 60;
+            showToast(autoTrade ? '🤖 Auto-trade ON' : '⏸ Auto-trade OFF');
+        });
     </script>
 </body>
 </html>
