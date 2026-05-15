@@ -133,6 +133,27 @@
         .analytic-value.red { color: var(--red); }
         .analytic-value.blue { color: var(--blue); }
         .analytic-value.gold { color: var(--gold); }
+        /* Grid Bot */
+        .grid-card { background: var(--card); border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid var(--border); }
+        .grid-toggle { }
+        .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: var(--bg2); transition: .3s; border-radius: 24px; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; transition: .3s; border-radius: 50%; }
+        input:checked + .slider { background: var(--green); }
+        input:checked + .slider:before { transform: translateX(20px); }
+        .grid-config { margin: 12px 0; }
+        .grid-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+        .grid-row:last-child { border: none; }
+        .grid-label { font-size: 0.85rem; color: var(--dim); }
+        .grid-value { font-weight: 600; }
+        .grid-orders { background: var(--bg); border-radius: 8px; padding: 8px; margin: 12px 0; min-height: 60px; }
+        .grid-order { display: flex; justify-content: space-between; padding: 6px 8px; border-radius: 6px; margin: 4px 0; font-size: 0.8rem; }
+        .grid-order.buy { background: rgba(0,255,136,0.1); }
+        .grid-order.sell { background: rgba(255,82,82,0.1); }
+        .grid-order.filled { opacity: 0.5; }
+        .grid-stats { display: flex; justify-content: space-between; font-size: 0.8rem; }
+        .grid-stat { display: flex; gap: 6px; }
         /* Exchanges */
         .exchange-card { background: var(--card); border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid var(--border); }
         .exchange-list { display: flex; flex-direction: column; gap: 8px; }
@@ -352,6 +373,51 @@
         </div>
     </div>
 
+    <!-- Grid Bot -->
+    <div class="grid-card" id="gridBotSection">
+        <div class="trades-header">
+            <div class="trades-title">🔄 Spot Grid Bot</div>
+            <div class="grid-toggle">
+                <label class="switch">
+                    <input type="checkbox" id="gridEnabled" onchange="toggleGridBot()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+        <div class="grid-config" id="gridConfig">
+            <div class="grid-row">
+                <div class="grid-label">Investment</div>
+                <div class="grid-value">
+                    <input type="number" id="gridInvest" value="1000" min="100" style="width:80px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px">
+                    <span style="color:var(--dim);font-size:0.75rem">USDT</span>
+                </div>
+            </div>
+            <div class="grid-row">
+                <div class="grid-label">Grid Levels</div>
+                <div class="grid-value">
+                    <input type="number" id="gridLevels" value="5" min="3" max="20" style="width:60px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px">
+                </div>
+            </div>
+            <div class="grid-row">
+                <div class="grid-label">Price Range</div>
+                <div class="grid-value" style="font-size:0.8rem">
+                    <span id="gridLower">-</span> to <span id="gridUpper">-</span>
+                </div>
+            </div>
+            <div class="grid-row">
+                <div class="grid-label">Profit/Grid</div>
+                <div class="grid-value green" id="gridProfit">0.5%</div>
+            </div>
+        </div>
+        <div class="grid-orders" id="gridOrders">
+            <div class="no-trades">Grid bot inactive</div>
+        </div>
+        <div class="grid-stats">
+            <div class="grid-stat"><span>Grids Filled:</span> <span id="gridFilled">0</span></div>
+            <div class="grid-stat"><span>Total Profit:</span> <span class="green" id="gridProfitTotal">₹0</span></div>
+        </div>
+    </div>
+
     <!-- Exchanges -->
     <div class="exchange-card">
         <div class="trades-header">
@@ -391,6 +457,10 @@
     <div class="nav-item" onclick="showSection('trades')">
         <span class="nav-icon">📋</span>
         <span>Trades</span>
+    </div>
+    <div class="nav-item" onclick="showSection('gridbot')">
+        <span class="nav-icon">🔄</span>
+        <span>Grid</span>
     </div>
     <div class="nav-item" onclick="showSection('analytics')">
         <span class="nav-icon">📈</span>
@@ -1205,8 +1275,173 @@ document.querySelectorAll('.tf-btn').forEach(b => {
     };
 });
 
+// ===== GRID BOT =====
+let gridBot = {
+    enabled: false,
+    investment: 1000,
+    levels: 5,
+    lowerPrice: 0,
+    upperPrice: 0,
+    gridLines: [],
+    orders: [],
+    filledCount: 0,
+    totalProfit: 0
+};
+
+function toggleGridBot() {
+    const enabled = document.getElementById('gridEnabled').checked;
+    gridBot.enabled = enabled;
+    if (enabled) {
+        initGridBot();
+        startGridBot();
+    } else {
+        stopGridBot();
+    }
+    saveGridState();
+}
+
+function initGridBot() {
+    gridBot.investment = +document.getElementById('gridInvest').value || 1000;
+    gridBot.levels = +document.getElementById('gridLevels').value || 5;
+    gridBot.filledCount = 0;
+    gridBot.totalProfit = 0;
+    gridBot.orders = [];
+
+    // Set price range (±5% from current price)
+    const range = currentPrice * 0.1;
+    gridBot.lowerPrice = currentPrice - range;
+    gridBot.upperPrice = currentPrice + range;
+
+    // Calculate grid lines
+    const step = (gridBot.upperPrice - gridBot.lowerPrice) / gridBot.levels;
+    gridBot.gridLines = [];
+    for (let i = 0; i <= gridBot.levels; i++) {
+        gridBot.gridLines.push({
+            price: gridBot.lowerPrice + (step * i),
+            side: i % 2 === 0 ? 'sell' : 'buy', // alternate sell/buy
+            filled: false,
+            size: (gridBot.investment / gridBot.levels) / (step * (i + 0.5))
+        });
+    }
+
+    // Create orders
+    gridBot.orders = gridBot.gridLines.map((line, i) => ({
+        id: i,
+        price: line.price,
+        side: line.side,
+        size: Math.max(1, Math.floor(line.size)),
+        filled: false,
+        gridLine: i
+    }));
+
+    updateGridUI();
+}
+
+function startGridBot() {
+    checkGridOrders();
+    setInterval(checkGridOrders, 5000); // Check every 5 seconds
+}
+
+function stopGridBot() {
+    showToast('Grid Bot Stopped');
+    document.getElementById('gridOrders').innerHTML = '<div class="no-trades">Grid bot inactive</div>';
+}
+
+function checkGridOrders() {
+    if (!gridBot.enabled || !gridBot.orders.length) return;
+
+    const profitPerGrid = 2 / gridBot.levels; // 2% total profit / grid count
+
+    gridBot.orders.forEach(order => {
+        if (order.filled) return;
+
+        const shouldFill = order.side === 'buy'
+            ? currentPrice <= order.price
+            : currentPrice >= order.price;
+
+        if (shouldFill) {
+            order.filled = true;
+            gridBot.gridLines[order.gridLine].filled = true;
+            gridBot.filledCount++;
+
+            // Calculate profit (simplified)
+            const orderValue = order.size * order.price;
+            const profit = orderValue * (profitPerGrid / 100);
+
+            if (order.side === 'buy') {
+                // Buy filled - next grid should sell higher
+                const nextSell = gridBot.orders.find(o => o.side === 'sell' && o.price > order.price && !o.filled);
+                if (nextSell) {
+                    balance -= order.size * order.price;
+                    // Simulate the sell order
+                }
+            } else {
+                balance += profit;
+                gridBot.totalProfit += profit;
+            }
+        }
+    });
+
+    updateGridUI();
+    saveGridState();
+}
+
+function updateGridUI() {
+    document.getElementById('gridLower').textContent = fmtUSD(gridBot.lowerPrice);
+    document.getElementById('gridUpper').textContent = fmtUSD(gridBot.upperPrice);
+    document.getElementById('gridFilled').textContent = gridBot.filledCount;
+    document.getElementById('gridProfitTotal').textContent = '₹' + (gridBot.totalProfit * INR_RATE).toFixed(0);
+
+    const profitPer = (2 / gridBot.levels).toFixed(2);
+    document.getElementById('gridProfit').textContent = profitPer + '%';
+
+    if (!gridBot.orders.length) {
+        document.getElementById('gridOrders').innerHTML = '<div class="no-trades">Grid bot inactive</div>';
+        return;
+    }
+
+    let html = '';
+    gridBot.orders.forEach(order => {
+        const cls = order.filled ? 'filled' : order.side;
+        const status = order.filled ? '✓ Filled' : (order.side === 'buy' ? '📥 Buy Limit' : '📤 Sell Limit');
+        html += `<div class="grid-order ${cls}">${status} @ ${fmtUSD(order.price)} (${order.size})</div>`;
+    });
+    document.getElementById('gridOrders').innerHTML = html;
+}
+
+function saveGridState() {
+    localStorage.setItem('gridBot', JSON.stringify(gridBot));
+}
+
+function loadGridState() {
+    const saved = localStorage.getItem('gridBot');
+    if (saved) {
+        gridBot = JSON.parse(saved);
+        document.getElementById('gridEnabled').checked = gridBot.enabled;
+        document.getElementById('gridInvest').value = gridBot.investment;
+        document.getElementById('gridLevels').value = gridBot.levels;
+        if (gridBot.enabled) updateGridUI();
+    }
+}
+
+function showSection(id) {
+    // Hide all sections, show selected
+    const sections = ['dashboard', 'trades', 'gridbot', 'analytics'];
+    sections.forEach(s => {
+        const el = document.getElementById(s + 'Section');
+        if (el) el.style.display = 'none';
+    });
+    const target = document.getElementById(id + 'Section');
+    if (target) target.style.display = 'block';
+
+    // Update nav
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    event.target.closest('.nav-item')?.classList.add('active');
+}
+
 // ===== INIT =====
 initMemory();
+loadGridState();
 loadData();
 updateAll();
 if (autoTrade) startScanner();
