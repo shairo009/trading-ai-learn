@@ -412,7 +412,7 @@ let currentSymbol = 'BTCUSDT';
 let currentPrice = 0;
 let priceHistory = [];
 let autoTrade = true;
-let aiConfidence = 60;
+let aiConfidence = 40;
 let consecutiveWins = 0;
 let consecutiveLoss = 0;
 let currentInterval = '1h';
@@ -471,7 +471,7 @@ function calcRSI(data, period = 14) {
 
 // ===== AI ANALYSIS =====
 function analyzeSignal(data) {
-    if (data.length < 50) return { signal: 'HOLD', conf: 0, rsi: 50, entry: 0, sl: 0, target: 0, reason: 'Collecting data...' };
+    if (data.length < 30) return { signal: 'HOLD', conf: 0, rsi: 50, entry: 0, sl: 0, target: 0, reason: 'Collecting data...' };
 
     const ema9 = calcEMA(data, 9);
     const ema21 = calcEMA(data, 21);
@@ -485,30 +485,30 @@ function analyzeSignal(data) {
 
     let score = 0, reasons = [];
 
-    // RSI
-    if (rsiVal < 30) { score += 3; reasons.push('RSI Oversold'); }
-    else if (rsiVal > 70) { score -= 3; reasons.push('RSI Overbought'); }
-    else if (rsiVal < 45 && rsiVal > rsi[rsi.length-2]) { score += 1; reasons.push('RSI Rising'); }
-    else if (rsiVal > 55 && rsiVal < rsi[rsi.length-2]) { score -= 1; reasons.push('RSI Falling'); }
+    // RSI - more aggressive scoring
+    if (rsiVal < 35) { score += 4; reasons.push('RSI Oversold'); }
+    else if (rsiVal > 65) { score -= 4; reasons.push('RSI Overbought'); }
+    else if (rsiVal < 50 && rsiVal > rsi[rsi.length-2]) { score += 2; reasons.push('RSI Rising'); }
+    else if (rsiVal > 50 && rsiVal < rsi[rsi.length-2]) { score -= 2; reasons.push('RSI Falling'); }
 
-    // EMA
-    if (ema9[last] > ema21[last] && ema9[last-1] <= ema21[last-1]) { score += 4; reasons.push('Golden Cross'); }
-    else if (ema9[last] < ema21[last] && ema9[last-1] >= ema21[last-1]) { score -= 4; reasons.push('Death Cross'); }
-    else if (price > ema55[last] && ema9[last] > ema21[last]) { score += 2; reasons.push('Uptrend'); }
-    else if (price < ema55[last] && ema9[last] < ema21[last]) { score -= 2; reasons.push('Downtrend'); }
+    // EMA - stronger signals
+    if (ema9[last] > ema21[last] && ema9[last-1] <= ema21[last-1]) { score += 5; reasons.push('Golden Cross'); }
+    else if (ema9[last] < ema21[last] && ema9[last-1] >= ema21[last-1]) { score -= 5; reasons.push('Death Cross'); }
+    else if (price > ema55[last] && ema9[last] > ema21[last]) { score += 3; reasons.push('Uptrend'); }
+    else if (price < ema55[last] && ema9[last] < ema21[last]) { score -= 3; reasons.push('Downtrend'); }
 
-    // MACD
-    if (macd > 0 && macdPrev <= 0) { score += 2; reasons.push('MACD Bullish'); }
-    else if (macd < 0 && macdPrev >= 0) { score -= 2; reasons.push('MACD Bearish'); }
+    // MACD - bullish/bearish crossover
+    if (macd > 0 && macdPrev <= 0) { score += 3; reasons.push('MACD Bullish'); }
+    else if (macd < 0 && macdPrev >= 0) { score -= 3; reasons.push('MACD Bearish'); }
 
     if (reasons.length === 0) reasons.push('Neutral');
 
     let signal = 'HOLD', entry = price, sl = 0, target = 0;
-    if (score >= 4) { signal = 'BUY'; sl = price * 0.995; target = price * 1.025; }
-    else if (score <= -4) { signal = 'SELL'; sl = price * 1.005; target = price * 0.975; }
+    if (score >= 5) { signal = 'BUY'; sl = price * 0.99; target = price * 1.03; }
+    else if (score <= -5) { signal = 'SELL'; sl = price * 1.01; target = price * 0.97; }
 
-    const conf = Math.min(92, Math.max(30, 45 + Math.abs(score) * 7 + Math.abs(rsiVal - 50) * 0.6));
-    return { signal, conf: Math.round(conf), rsi: Math.round(rsiVal), entry, sl, target, reason: reasons.slice(0,3).join(' | ') };
+    const conf = Math.min(95, Math.max(40, 50 + Math.abs(score) * 5 + Math.abs(rsiVal - 50) * 0.5));
+    return { signal, conf: Math.round(conf), rsi: Math.round(rsiVal), entry, sl, target, reason: reasons.slice(0,4).join(' | ') };
 }
 
 // ===== TRADE LOGIC =====
@@ -564,7 +564,13 @@ function checkTrades() {
         }
     }
 
-    if (consecutiveLoss >= 4) { autoTrade = false; showToast('⚠️ Auto-paused after 4 losses'); }
+    if (consecutiveLoss >= 6) { autoTrade = false; showToast('⚠️ Auto-paused after 6 losses'); }
+
+    // Learn from mistakes
+    if (aiLearning.total > 0 && aiLearning.correct / aiLearning.total < 0.4) {
+        aiConfidence = Math.max(25, aiConfidence - 5);
+    }
+
     if (updated) { saveData(); updateStats(); }
 }
 
