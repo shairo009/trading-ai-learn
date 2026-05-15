@@ -483,7 +483,19 @@ function analyzeSignal(data) {
     const macd = calcEMA(data, 12)[last] - calcEMA(data, 26)[last];
     const macdPrev = calcEMA(data, 12)[last-1] - calcEMA(data, 26)[last-1];
 
+    // Volume analysis
+    const volumes = data.map(k => k.v);
+    const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+    const curVol = volumes[last];
+    const volRatio = avgVol > 0 ? curVol / avgVol : 1;
+
     let score = 0, reasons = [];
+
+    // Volume - high volume confirms signal
+    if (volRatio > 2.0) { score += 3; reasons.push('Very High Vol'); }
+    else if (volRatio > 1.5) { score += 2; reasons.push('High Vol'); }
+    else if (volRatio > 1.2) { score += 1; reasons.push('Above Avg Vol'); }
+    else if (volRatio < 0.5) { score -= 1; reasons.push('Low Vol'); }
 
     // RSI - aggressive scoring
     if (rsiVal < 40) { score += 3; reasons.push('RSI Oversold'); }
