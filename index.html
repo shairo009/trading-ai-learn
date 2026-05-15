@@ -1115,16 +1115,24 @@ function updateStats() {
 // ===== CHART =====
 function drawChart() {
     const canvas = document.getElementById('mainChart');
-    const ctx = canvas.getContext('2d');
-    canvas.width = canvas.offsetWidth * 2;
-    canvas.height = canvas.offsetHeight * 2;
-    ctx.scale(2, 2);
+    if (!canvas) return;
 
-    const w = canvas.offsetWidth;
-    const h = canvas.offsetHeight;
+    const container = canvas.parentElement;
+    const w = container.clientWidth || 350;
+    const h = container.clientHeight || 200;
+
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, w, h);
 
-    if (priceHistory.length < 2) return;
+    if (priceHistory.length < 2) {
+        ctx.fillStyle = '#666';
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Loading chart...', w/2, h/2);
+        return;
+    }
 
     const prices = priceHistory.map(k => k.c);
     const min = Math.min(...prices) * 0.9995;
@@ -1444,6 +1452,10 @@ initMemory();
 loadGridState();
 loadData();
 updateAll();
+
+// Redraw chart on resize
+window.addEventListener('resize', () => setTimeout(drawChart, 100));
+
 if (autoTrade) startScanner();
 setInterval(updateAll, 30000);
 setTimeout(() => { updateAll(); showToast('ProTrade AI Ready! 🤖'); }, 2000);
