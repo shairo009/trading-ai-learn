@@ -469,6 +469,98 @@ function calcRSI(data, period = 14) {
     return rsi;
 }
 
+// ===== INDICATOR CALCULATIONS =====
+
+// Bollinger Bands
+function calcBB(data, period = 20, mult = 2) {
+    const result = [];
+    for (let i = 0; i < data.length; i++) {
+        if (i < period - 1) { result.push({ upper: null, mid: null, lower: null }); continue; }
+        const slice = data.slice(i - period + 1, i + 1);
+        const mean = slice.reduce((a, b) => a + b.c, 0) / period;
+        const variance = slice.reduce((a, b) => a + Math.pow(b.c - mean, 2), 0) / period;
+        const std = Math.sqrt(variance);
+        result.push({ upper: mean + mult * std, mid: mean, lower: mean - mult * std });
+    }
+    return result;
+}
+
+// VWAP
+function calcVWAP(data) {
+    let cumVP = 0, cumV = 0;
+    return data.map(k => {
+        const typical = (k.h + k.l + k.c) / 3;
+        cumVP += typical * k.v;
+        cumV += k.v;
+        return cumV > 0 ? cumVP / cumV : typical;
+    });
+}
+
+// Stochastic
+function calcStoch(data, k = 14, d = 3) {
+    const kLine = [], dLine = [];
+    for (let i = 0; i < data.length; i++) {
+        if (i < k - 1) { kLine.push(50); dLine.push(50); continue; }
+        const slice = data.slice(i - k + 1, i + 1);
+        const high = Math.max(...slice.map(s => s.h));
+        const low = Math.min(...slice.map(s => s.l));
+        const kVal = high - low !== 0 ? ((data[i].c - low) / (high - low)) * 100 : 50;
+        kLine.push(kVal);
+    }
+    for (let i = 0; i < kLine.length; i++) {
+        if (i < d - 1) { dLine.push(50); continue; }
+        dLine.push(kLine.slice(i - d + 1, i + 1).reduce((a, b) => a + b, 0) / d);
+    }
+    return { k: kLine, d: dLine };
+}
+
+// ATR
+function calcATR(data, period = 14) {
+    const tr = [data[0].h - data[0].l];
+    for (let i = 1; i < data.length; i++) {
+        tr.push(Math.max(data[i].h - data[i].l, Math.abs(data[i].h - data[i-1].c), Math.abs(data[i].l - data[i-1].c)));
+    }
+    const atr = [tr[0]];
+    for (let i = 1; i < tr.length; i++) {
+        atr.push((atr[i-1] * (period - 1) + tr[i]) / period);
+    }
+    return atr;
+}
+
+// ADX
+function calcADX(data, period = 14) {
+    const plusDM = [0], minusDM = [0], trArr = [data[0].h - data[0].l];
+    for (let i = 1; i < data.length; i++) {
+        const highDiff = data[i].h - data[i-1].h;
+        const lowDiff = data[i-1].l - data[i].l;
+        plusDM.push(highDiff > lowDiff && highDiff > 0 ? highDiff : 0);
+        minusDM.push(lowDiff > highDiff && lowDiff > 0 ? lowDiff : 0);
+        trArr.push(Math.max(data[i].h - data[i].l, Math.abs(data[i].h - data[i-1].c), Math.abs(data[i].l - data[i-1].c)));
+    }
+    let plusDI = [0], minusDI = [0], DX = [0];
+    const atr = calcATR(data, period);
+    for (let i = period; i < data.length; i++) {
+        const pdi = atr[i] > 0 ? (plusDM.slice(i-period+1, i+1).reduce((a,b) => a+b,0) / atr[i]) * 100 : 0;
+        const mdi = atr[i] > 0 ? (minusDM.slice(i-period+1, i+1).reduce((a,b) => a+b,0) / atr[i]) * 100 : 0;
+        plusDI.push(pdi);
+        minusDI.push(mdi);
+        DX.push(pdi + mdi > 0 ? Math.abs(pdi - mdi) / (pdi + mdi) * 100 : 0);
+    }
+    let adx = [25];
+    for (let i = 1; i < DX.length; i++) {
+        adx.push((adx[i-1] * (period - 1) + DX[i]) / period);
+    }
+    return { adx, plusDI, minusDI };
+}
+
+// MACD Histogram
+function calcMACDHist(data) {
+    const ema12 = calcEMA(data, 12);
+    const ema26 = calcEMA(data, 26);
+    const signal = calcEMA(data.map((d, i) => ({ c: ema12[i] - ema26[i] })), 9);
+    return ema12.map((_, i) => (ema12[i] - ema26[i]) - signal[i]);
+}
+
 // ===== AI ANALYSIS =====
 function analyzeSignal(data) {
     if (data.length < 30) return { signal: 'HOLD', conf: 0, rsi: 50, entry: 0, sl: 0, target: 0, reason: 'Collecting data...' };
@@ -480,8 +572,16 @@ function analyzeSignal(data) {
     const last = data.length - 1;
     const price = data[last].c;
     const rsiVal = rsi[rsi.length-1] || 50;
-    const macd = calcEMA(data, 12)[last] - calcEMA(data, 26)[last];
-    const macdPrev = calcEMA(data, 12)[last-1] - calcEMA(data, 26)[last-1];
+    const macd = ema12[last] - ema26[last];
+    const ema12 = calcEMA(data, 12);
+    const ema26 = calcEMA(data, 26);
+    const macdPrev = macdPrevCalc(data, last);
+    const bb = calcBB(data, 20, 2);
+    const vwap = calcVWAP(data);
+    const stoch = calcStoch(data, 14, 3);
+    const atr = calcATR(data, 14);
+    const adx = calcADX(data, 14);
+    const macdHist = calcMACDHist(data);
 
     // Volume analysis
     const volumes = data.map(k => k.v);
@@ -497,32 +597,91 @@ function analyzeSignal(data) {
     else if (volRatio > 1.2) { score += 1; reasons.push('Above Avg Vol'); }
     else if (volRatio < 0.5) { score -= 1; reasons.push('Low Vol'); }
 
-    // RSI - aggressive scoring
-    if (rsiVal < 40) { score += 3; reasons.push('RSI Oversold'); }
-    else if (rsiVal > 60) { score -= 3; reasons.push('RSI Overbought'); }
+    // RSI
+    if (rsiVal < 30) { score += 4; reasons.push('RSI Oversold'); }
+    else if (rsiVal > 70) { score -= 4; reasons.push('RSI Overbought'); }
+    else if (rsiVal < 40) { score += 3; reasons.push('RSI Near Oversold'); }
+    else if (rsiVal > 60) { score -= 3; reasons.push('RSI Near Overbought'); }
     else if (rsiVal < 50 && rsiVal > rsi[rsi.length-2]) { score += 1; reasons.push('RSI Rising'); }
     else if (rsiVal > 50 && rsiVal < rsi[rsi.length-2]) { score -= 1; reasons.push('RSI Falling'); }
 
-    // EMA - signals
+    // EMA
     if (ema9[last] > ema21[last] && ema9[last-1] <= ema21[last-1]) { score += 4; reasons.push('Golden Cross'); }
     else if (ema9[last] < ema21[last] && ema9[last-1] >= ema21[last-1]) { score -= 4; reasons.push('Death Cross'); }
     else if (price > ema55[last] && ema9[last] > ema21[last]) { score += 2; reasons.push('Uptrend'); }
     else if (price < ema55[last] && ema9[last] < ema21[last]) { score -= 2; reasons.push('Downtrend'); }
 
     // MACD
-    if (macd > 0 && macdPrev <= 0) { score += 2; reasons.push('MACD Bullish'); }
-    else if (macd < 0 && macdPrev >= 0) { score -= 2; reasons.push('MACD Bearish'); }
+    if (macd > 0 && macdPrev <= 0) { score += 3; reasons.push('MACD Bullish'); }
+    else if (macd < 0 && macdPrev >= 0) { score -= 3; reasons.push('MACD Bearish'); }
     else if (macd > 0) { score += 1; }
     else { score -= 1; }
+
+    // MACD Histogram
+    if (macdHist[last] > 0 && macdHist[last] > macdHist[last-1]) { score += 2; reasons.push('MACD Hist Rising'); }
+    else if (macdHist[last] < 0 && macdHist[last] < macdHist[last-1]) { score -= 2; reasons.push('MACD Hist Falling'); }
+
+    // Bollinger Bands
+    const bbPos = bb[last];
+    if (bbPos.upper && bbPos.lower) {
+        const bbWidth = bbPos.upper - bbPos.lower;
+        const bbPct = (price - bbPos.lower) / (bbWidth || 1);
+        if (bbPct < 0.2) { score += 2; reasons.push('BB Lower Bound'); }
+        else if (bbPct > 0.8) { score -= 2; reasons.push('BB Upper Bound'); }
+        if (price < bbPos.lower) { score += 3; reasons.push('BB Break Lower'); }
+        else if (price > bbPos.upper) { score -= 3; reasons.push('BB Break Upper'); }
+    }
+
+    // VWAP
+    if (vwap[last] && price > vwap[last]) { score += 2; reasons.push('Above VWAP'); }
+    else if (vwap[last] && price < vwap[last]) { score -= 2; reasons.push('Below VWAP'); }
+
+    // Stochastic
+    const stochK = stoch.k[stoch.k.length-1] || 50;
+    const stochD = stoch.d[stoch.d.length-1] || 50;
+    if (stochK < 20 && stochD < 20) { score += 3; reasons.push('Stoch Oversold'); }
+    else if (stochK > 80 && stochD > 80) { score -= 3; reasons.push('Stoch Overbought'); }
+    else if (stochK < stochD && stochK > stoch.d[stoch.d.length-2]) { score += 1; reasons.push('Stoch Golden'); }
+    else if (stochK > stochD && stochK < stoch.d[stoch.d.length-2]) { score -= 1; reasons.push('Stoch Death'); }
+
+    // ADX Trend Strength
+    const adxVal = adx.adx[adx.adx.length-1] || 25;
+    if (adxVal > 25) {
+        if (adx.plusDI[adx.plusDI.length-1] > adx.minusDI[adx.minusDI.length-1]) { score += 2; reasons.push('Strong Uptrend'); }
+        else { score -= 2; reasons.push('Strong Downtrend'); }
+    }
+
+    // ATR Volatility
+    const atrVal = atr[atr.length-1] || 0;
+    const atrPct = (atrVal / price) * 100;
+    if (atrPct > 3) { score += 1; reasons.push('High Volatility'); }
+    else if (atrPct < 1) { score -= 1; reasons.push('Low Volatility'); }
+
+    // Price Momentum
+    if (data.length >= 10) {
+        const mom10 = price - data[data.length-10].c;
+        const momPct = (mom10 / data[data.length-10].c) * 100;
+        if (momPct > 2) { score += 2; reasons.push('Strong Momentum'); }
+        else if (momPct < -2) { score -= 2; reasons.push('Weak Momentum'); }
+        else if (momPct > 0) { score += 1; }
+        else { score -= 1; }
+    }
 
     if (reasons.length === 0) reasons.push('Neutral');
 
     let signal = 'HOLD', entry = price, sl = 0, target = 0;
-    if (score >= 5) { signal = 'BUY'; sl = price * 0.99; target = price * 1.03; }
-    else if (score <= -5) { signal = 'SELL'; sl = price * 1.01; target = price * 0.97; }
+    if (score >= 6) { signal = 'BUY'; sl = price * 0.99; target = price * 1.03; }
+    else if (score <= -6) { signal = 'SELL'; sl = price * 1.01; target = price * 0.97; }
 
-    const conf = Math.min(95, Math.max(40, 50 + Math.abs(score) * 5 + Math.abs(rsiVal - 50) * 0.5));
-    return { signal, conf: Math.round(conf), rsi: Math.round(rsiVal), entry, sl, target, reason: reasons.slice(0,4).join(' | ') };
+    const conf = Math.min(95, Math.max(40, 50 + Math.abs(score) * 4 + Math.abs(rsiVal - 50) * 0.5));
+    return { signal, conf: Math.round(conf), rsi: Math.round(rsiVal), entry, sl, target, reason: reasons.slice(0,5).join(' | ') };
+}
+
+function macdPrevCalc(data, last) {
+    if (last < 2) return 0;
+    const ema12 = calcEMA(data, 12);
+    const ema26 = calcEMA(data, 26);
+    return ema12[last-1] - ema26[last-1];
 }
 
 // ===== TRADE LOGIC =====
