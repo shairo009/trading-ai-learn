@@ -684,16 +684,89 @@ function macdPrevCalc(data, last) {
     return ema12[last-1] - ema26[last-1];
 }
 
+// ===== TOP COINS BY VOLUME =====
+const TOP_COINS = [
+    'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'SOLUSDT',
+    'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT', 'MATICUSDT',
+    'LINKUSDT', 'LTCUSDT', 'UNIUSDT', 'ATOMUSDT', 'XLMUSDT',
+    'ETCUSDT', 'FILUSDT', 'APTUSDT', 'ARBUSDT', 'OPUSDT'
+];
+
+let multiCoinAnalysis = [];
+let scannerInterval = null;
+
+async function scanAllCoins() {
+    if (!autoTrade) return;
+    const openTrades = trades.filter(t => t.status === 'open');
+    if (openTrades.length >= 3) return;
+
+    multiCoinAnalysis = [];
+
+    for (const symbol of TOP_COINS) {
+        try {
+            const resp = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=100`);
+            const data = await resp.json();
+            if (!data || data.length < 30) continue;
+
+            const ohlc = data.map(k => ({ o: parseFloat(k[1]), h: parseFloat(k[2]), l: parseFloat(k[3]), c: parseFloat(k[4]), v: parseFloat(k[5]) }));
+            const analysis = analyzeSignal(ohlc);
+
+            if (analysis.signal !== 'HOLD' && analysis.conf >= 60) {
+                multiCoinAnalysis.push({
+                    symbol: symbol.replace('USDT', '/USDT'),
+                    price: ohlc[ohlc.length-1].c,
+                    ...analysis
+                });
+            }
+        } catch (e) {}
+    }
+
+    // Sort by confidence
+    multiCoinAnalysis.sort((a, b) => b.conf - a.conf);
+
+    // Auto trade best signal
+    if (multiCoinAnalysis.length > 0) {
+        const best = multiCoinAnalysis[0];
+        if (openTrades.length < 3) {
+            const type = best.signal === 'BUY' ? 'long' : 'short';
+            const slDist = type === 'long' ? best.price * 0.01 : best.price * 0.01;
+            const size = Math.floor((balance * 0.02) / slDist);
+
+            // Check if already trading this coin
+            const existing = openTrades.find(t => t.sym === best.symbol.replace('/USDT', ''));
+            if (!existing && size >= 1) {
+                trades.push({
+                    id: Date.now(), type, sym: best.symbol.replace('/USDT', ''), entry: best.price,
+                    sl: type === 'long' ? best.price * 0.99 : best.price * 1.01,
+                    target: type === 'long' ? best.price * 1.03 : best.price * 0.97,
+                    size, status: 'open', pnl: 0, conf: best.conf, reason: best.reason, time: Date.now()
+                });
+                saveData();
+                showToast(`🤖 ${type.toUpperCase()} ${best.symbol} @ ${fmtUSD(best.price)}`);
+            }
+        }
+    }
+}
+
+function startScanner() {
+    if (scannerInterval) clearInterval(scannerInterval);
+    scannerInterval = setInterval(scanAllCoins, 10000); // Every 10 seconds
+}
+
+function stopScanner() {
+    if (scannerInterval) {
+        clearInterval(scannerInterval);
+        scannerInterval = null;
+    }
+}
+
 // ===== TRADE LOGIC =====
 function autoExecute(analysis) {
     if (!autoTrade) return;
-    if (balance < 500) { showToast('Low balance!'); return; }
+    const openTrades = trades.filter(t => t.status === 'open');
+    if (openTrades.length >= 3) return;
     if (analysis.signal === 'HOLD') return;
     if (analysis.conf < 55) return;
-    if (trades.filter(t => t.status === 'open').length >= 2) return;
-
-    const openTrades = trades.filter(t => t.status === 'open');
-    if (openTrades.length > 0) return;
 
     const type = analysis.signal === 'BUY' ? 'long' : 'short';
     const slDist = type === 'long' ? currentPrice - analysis.sl : analysis.sl - currentPrice;
@@ -983,8 +1056,15 @@ function showToast(msg) {
 // ===== TOGGLE AUTO =====
 function toggleAuto() {
     autoTrade = !autoTrade;
-    if (autoTrade) { consecutiveLoss = 0; aiConfidence = 60; }
-    showToast(autoTrade ? '🤖 Auto ON' : '⏸ Auto OFF');
+    if (autoTrade) {
+        consecutiveLoss = 0;
+        aiConfidence = 60;
+        startScanner();
+        showToast('🤖 Auto ON - Multi-Coin Scanner Active');
+    } else {
+        stopScanner();
+        showToast('⏸ Auto OFF');
+    }
     document.getElementById('autoBadge').textContent = autoTrade ? '🤖 AUTO ON' : '⏸ AUTO OFF';
     document.getElementById('autoBadge').className = 'auto-badge ' + (autoTrade ? 'on' : 'off');
     document.getElementById('navAuto').textContent = autoTrade ? 'ON' : 'OFF';
@@ -1015,6 +1095,7 @@ document.querySelectorAll('.tf-btn').forEach(b => {
 // ===== INIT =====
 loadData();
 updateAll();
+if (autoTrade) startScanner();
 setInterval(updateAll, 30000);
 setTimeout(() => { updateAll(); showToast('ProTrade AI Ready!'); }, 2000);
 </script>
