@@ -412,7 +412,7 @@ let currentSymbol = 'BTCUSDT';
 let currentPrice = 0;
 let priceHistory = [];
 let autoTrade = true;
-let aiConfidence = 40;
+let aiConfidence = 60;
 let consecutiveWins = 0;
 let consecutiveLoss = 0;
 let currentInterval = '1h';
@@ -485,21 +485,23 @@ function analyzeSignal(data) {
 
     let score = 0, reasons = [];
 
-    // RSI - more aggressive scoring
-    if (rsiVal < 35) { score += 4; reasons.push('RSI Oversold'); }
-    else if (rsiVal > 65) { score -= 4; reasons.push('RSI Overbought'); }
-    else if (rsiVal < 50 && rsiVal > rsi[rsi.length-2]) { score += 2; reasons.push('RSI Rising'); }
-    else if (rsiVal > 50 && rsiVal < rsi[rsi.length-2]) { score -= 2; reasons.push('RSI Falling'); }
+    // RSI - aggressive scoring
+    if (rsiVal < 40) { score += 3; reasons.push('RSI Oversold'); }
+    else if (rsiVal > 60) { score -= 3; reasons.push('RSI Overbought'); }
+    else if (rsiVal < 50 && rsiVal > rsi[rsi.length-2]) { score += 1; reasons.push('RSI Rising'); }
+    else if (rsiVal > 50 && rsiVal < rsi[rsi.length-2]) { score -= 1; reasons.push('RSI Falling'); }
 
-    // EMA - stronger signals
-    if (ema9[last] > ema21[last] && ema9[last-1] <= ema21[last-1]) { score += 5; reasons.push('Golden Cross'); }
-    else if (ema9[last] < ema21[last] && ema9[last-1] >= ema21[last-1]) { score -= 5; reasons.push('Death Cross'); }
-    else if (price > ema55[last] && ema9[last] > ema21[last]) { score += 3; reasons.push('Uptrend'); }
-    else if (price < ema55[last] && ema9[last] < ema21[last]) { score -= 3; reasons.push('Downtrend'); }
+    // EMA - signals
+    if (ema9[last] > ema21[last] && ema9[last-1] <= ema21[last-1]) { score += 4; reasons.push('Golden Cross'); }
+    else if (ema9[last] < ema21[last] && ema9[last-1] >= ema21[last-1]) { score -= 4; reasons.push('Death Cross'); }
+    else if (price > ema55[last] && ema9[last] > ema21[last]) { score += 2; reasons.push('Uptrend'); }
+    else if (price < ema55[last] && ema9[last] < ema21[last]) { score -= 2; reasons.push('Downtrend'); }
 
-    // MACD - bullish/bearish crossover
-    if (macd > 0 && macdPrev <= 0) { score += 3; reasons.push('MACD Bullish'); }
-    else if (macd < 0 && macdPrev >= 0) { score -= 3; reasons.push('MACD Bearish'); }
+    // MACD
+    if (macd > 0 && macdPrev <= 0) { score += 2; reasons.push('MACD Bullish'); }
+    else if (macd < 0 && macdPrev >= 0) { score -= 2; reasons.push('MACD Bearish'); }
+    else if (macd > 0) { score += 1; }
+    else { score -= 1; }
 
     if (reasons.length === 0) reasons.push('Neutral');
 
@@ -516,7 +518,7 @@ function autoExecute(analysis) {
     if (!autoTrade) return;
     if (balance < 500) { showToast('Low balance!'); return; }
     if (analysis.signal === 'HOLD') return;
-    if (analysis.conf < aiConfidence) return;
+    if (analysis.conf < 55) return;
     if (trades.filter(t => t.status === 'open').length >= 2) return;
 
     const openTrades = trades.filter(t => t.status === 'open');
