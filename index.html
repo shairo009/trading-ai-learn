@@ -220,7 +220,7 @@
         </div>
     </div>
 
-    <!-- Symbol Selector -->
+    <div id="dashboardSection">
     <div class="symbol-bar">
         <button class="sym-btn active" data-sym="BTCUSDT">BTC</button>
         <button class="sym-btn" data-sym="ETHUSDT">ETH</button>
@@ -373,8 +373,8 @@
         </div>
     </div>
 
-    <!-- Grid Bot -->
-    <div class="grid-card" id="gridBotSection">
+    <!-- Grid Bot (inside dashboard) -->
+    <div class="grid-card">
         <div class="trades-header">
             <div class="trades-title">🔄 Spot Grid Bot</div>
             <div class="grid-toggle">
@@ -443,6 +443,75 @@
                     <div class="status-dot"></div>
                     Active
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Trades Section -->
+<div id="tradesSection" style="display:none">
+    <div class="trades-card">
+        <div class="trades-header">
+            <div class="trades-title">📋 Trade History</div>
+        </div>
+        <div id="allTradesList">
+            <div class="no-trades">No trades yet</div>
+        </div>
+    </div>
+</div>
+
+<!-- Grid Bot Section -->
+<div id="gridbotSection" style="display:none">
+    <div class="grid-card">
+        <div class="trades-header">
+            <div class="trades-title">🔄 Grid Bot Settings</div>
+        </div>
+        <div class="grid-config">
+            <div class="grid-row">
+                <div class="grid-label">Investment</div>
+                <div class="grid-value">
+                    <input type="number" id="gridInvest2" value="1000" min="100" style="width:80px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px">
+                </div>
+            </div>
+            <div class="grid-row">
+                <div class="grid-label">Grid Levels</div>
+                <div class="grid-value">
+                    <input type="number" id="gridLevels2" value="5" min="3" max="20" style="width:60px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px">
+                </div>
+            </div>
+        </div>
+        <div class="grid-orders" id="gridOrders2">
+            <div class="no-trades">Configure and start Grid Bot</div>
+        </div>
+        <div class="grid-stats">
+            <div class="grid-stat"><span>Grids:</span> <span id="gridFilled2">0</span></div>
+            <div class="grid-stat"><span>Profit:</span> <span class="green" id="gridProfit2">₹0</span></div>
+        </div>
+    </div>
+</div>
+
+<!-- Analytics Section -->
+<div id="analyticsSection" style="display:none">
+    <div class="trades-card">
+        <div class="trades-header">
+            <div class="trades-title">📈 AI Learning Stats</div>
+        </div>
+        <div id="aiMemoryStats">
+            <div class="analytic-item">
+                <div class="analytic-label">Total Trades</div>
+                <div class="analytic-value" id="memTotal">0</div>
+            </div>
+            <div class="analytic-item">
+                <div class="analytic-label">Wins</div>
+                <div class="analytic-value green" id="memWins">0</div>
+            </div>
+            <div class="analytic-item">
+                <div class="analytic-label">Losses</div>
+                <div class="analytic-value red" id="memLosses">0</div>
+            </div>
+            <div class="analytic-item">
+                <div class="analytic-label">Win Rate</div>
+                <div class="analytic-value blue" id="memWinRate">0%</div>
             </div>
         </div>
     </div>
