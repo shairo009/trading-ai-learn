@@ -417,6 +417,108 @@ let consecutiveWins = 0;
 let consecutiveLoss = 0;
 let currentInterval = '1h';
 
+// ===== AI SELF-LEARNING MEMORY =====
+let aiMemory = {
+    wins: [],           // Winning patterns
+    losses: [],         // Losing patterns
+    stats: { wins: 0, losses: 0, total: 0 },
+    indicators: {}      // Per-indicator performance
+};
+
+function initMemory() {
+    const saved = localStorage.getItem('aiMemory');
+    if (saved) {
+        aiMemory = JSON.parse(saved);
+    } else {
+        // Default indicator weights
+        aiMemory.indicators = {
+            rsi: { weight: 1, wins: 0, losses: 0 },
+            ema: { weight: 1, wins: 0, losses: 0 },
+            macd: { weight: 1, wins: 0, losses: 0 },
+            volume: { weight: 1, wins: 0, losses: 0 },
+            bb: { weight: 1, wins: 0, losses: 0 },
+            stoch: { weight: 1, wins: 0, losses: 0 },
+            vwap: { weight: 1, wins: 0, losses: 0 },
+            adx: { weight: 1, wins: 0, losses: 0 }
+        };
+        saveMemory();
+    }
+}
+
+function saveMemory() {
+    localStorage.setItem('aiMemory', JSON.stringify(aiMemory));
+}
+
+function learnFromTrade(trade) {
+    const won = trade.pnl > 0;
+    const pattern = {
+        ...trade,
+        timestamp: Date.now()
+    };
+
+    if (won) {
+        aiMemory.wins.push(pattern);
+        aiMemory.stats.wins++;
+        // Boost weights of indicators that worked
+        if (trade.reason) {
+            const reasons = trade.reason.split(' | ');
+            reasons.forEach(r => {
+                const key = getIndicatorKey(r);
+                if (key && aiMemory.indicators[key]) {
+                    aiMemory.indicators[key].wins++;
+                    aiMemory.indicators[key].weight = Math.min(2, aiMemory.indicators[key].weight + 0.1);
+                }
+            });
+        }
+    } else {
+        aiMemory.losses.push(pattern);
+        aiMemory.stats.losses++;
+        // Reduce weights of indicators that failed
+        if (trade.reason) {
+            const reasons = trade.reason.split(' | ');
+            reasons.forEach(r => {
+                const key = getIndicatorKey(r);
+                if (key && aiMemory.indicators[key]) {
+                    aiMemory.indicators[key].losses++;
+                    aiMemory.indicators[key].weight = Math.max(0.5, aiMemory.indicators[key].weight - 0.1);
+                }
+            });
+        }
+    }
+    aiMemory.stats.total++;
+    saveMemory();
+}
+
+function getIndicatorKey(reason) {
+    const r = reason.toLowerCase();
+    if (r.includes('rsi')) return 'rsi';
+    if (r.includes('ema') || r.includes('cross') || r.includes('trend')) return 'ema';
+    if (r.includes('macd')) return 'macd';
+    if (r.includes('vol')) return 'volume';
+    if (r.includes('bb') || r.includes('band')) return 'bb';
+    if (r.includes('stoch')) return 'stoch';
+    if (r.includes('vwap')) return 'vwap';
+    if (r.includes('adx')) return 'adx';
+    return null;
+}
+
+function getLearnedScore(reasons) {
+    let bonus = 0;
+    if (!reasons) return 0;
+    reasons.forEach(r => {
+        const key = getIndicatorKey(r);
+        if (key && aiMemory.indicators[key]) {
+            const ind = aiMemory.indicators[key];
+            const total = ind.wins + ind.losses;
+            if (total > 5) {
+                const winRate = ind.wins / total;
+                bonus += (winRate - 0.5) * 2; // +1 if 100% win, -1 if 0%
+            }
+        }
+    });
+    return bonus;
+}
+
 // ===== FORMAT =====
 function fmt(num, d = 2) {
     return '₹' + num.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -669,11 +771,15 @@ function analyzeSignal(data) {
 
     if (reasons.length === 0) reasons.push('Neutral');
 
-    let signal = 'HOLD', entry = price, sl = 0, target = 0;
-    if (score >= 6) { signal = 'BUY'; sl = price * 0.99; target = price * 1.03; }
-    else if (score <= -6) { signal = 'SELL'; sl = price * 1.01; target = price * 0.97; }
+    // Get learned bonus from AI memory
+    const learnedBonus = getLearnedScore(reasons);
+    const finalScore = score + learnedBonus;
 
-    const conf = Math.min(95, Math.max(40, 50 + Math.abs(score) * 4 + Math.abs(rsiVal - 50) * 0.5));
+    let signal = 'HOLD', entry = price, sl = 0, target = 0;
+    if (finalScore >= 6) { signal = 'BUY'; sl = price * 0.99; target = price * 1.03; }
+    else if (finalScore <= -6) { signal = 'SELL'; sl = price * 1.01; target = price * 0.97; }
+
+    const conf = Math.min(95, Math.max(40, 50 + Math.abs(finalScore) * 4 + Math.abs(rsiVal - 50) * 0.5));
     return { signal, conf: Math.round(conf), rsi: Math.round(rsiVal), entry, sl, target, reason: reasons.slice(0,5).join(' | ') };
 }
 
@@ -712,9 +818,14 @@ async function scanAllCoins() {
             const analysis = analyzeSignal(ohlc);
 
             if (analysis.signal !== 'HOLD' && analysis.conf >= 60) {
+                // Add learned memory bonus to score
+                const reasons = analysis.reason.split(' | ');
+                const learnedBonus = getLearnedScore(reasons);
+
                 multiCoinAnalysis.push({
                     symbol: symbol.replace('USDT', '/USDT'),
                     price: ohlc[ohlc.length-1].c,
+                    learnedBonus: Math.round(learnedBonus * 10) / 10,
                     ...analysis
                 });
             }
@@ -806,6 +917,8 @@ function checkTrades() {
             aiLearning.total++;
             if (t.pnl > 0) { aiLearning.correct++; consecutiveWins++; consecutiveLoss = 0; aiConfidence = Math.min(88, aiConfidence + 3); }
             else { consecutiveLoss++; consecutiveWins = 0; aiConfidence = Math.max(45, aiConfidence - 5); }
+            // Learn from this trade
+            learnFromTrade(t);
             updated = true;
         }
     }
@@ -1093,11 +1206,12 @@ document.querySelectorAll('.tf-btn').forEach(b => {
 });
 
 // ===== INIT =====
+initMemory();
 loadData();
 updateAll();
 if (autoTrade) startScanner();
 setInterval(updateAll, 30000);
-setTimeout(() => { updateAll(); showToast('ProTrade AI Ready!'); }, 2000);
+setTimeout(() => { updateAll(); showToast('ProTrade AI Ready! 🤖'); }, 2000);
 </script>
 </body>
 </html>
